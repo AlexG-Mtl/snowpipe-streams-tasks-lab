@@ -1,0 +1,53 @@
+name: Generate data and upload to S3
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"   # every 5 minutes (UTC)
+  workflow_dispatch: {}
+
+jobs:
+  generate-and-upload:
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      S3_BUCKET: ${{ secrets.S3_BUCKET }}
+      S3_PREFIX: ${{ vars.S3_PREFIX }}
+      OUT_DIR: out
+      N_NEW: "20"
+      N_UPDATES: "10"
+      DUP_RATE: "0.10"
+      LATE_RATE: "0.10"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install AWS CLI
+        run: |
+          pip install awscli
+
+      - name: Generate JSONL file
+        run: |
+          python scripts/generate_orders_events.py
+          ls -lah out
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Upload to S3 (partitioned path)
+        run: |
+          FILE=$(ls -1 out/orders_events_*.jsonl | tail -n 1)
+          DT=$(date -u +"dt=%Y-%m-%d")
+          HR=$(date -u +"hr=%H")
+          DEST="s3://${S3_BUCKET}/${S3_PREFIX}/${DT}/${HR}/"
+          echo "Uploading ${FILE} to ${DEST}"
+          aws s3 cp "${FILE}" "${DEST}"
